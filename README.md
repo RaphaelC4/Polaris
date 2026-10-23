@@ -1,4 +1,4 @@
-# VERITAS - a two-tier anti-fake-review gate on GenLayer StudioNet
+# POLARIS - a two-tier anti-fake-review gate on GenLayer StudioNet
 
 A **live** GenLayer project: a two-tier anti-fake-review gate
 (`ReviewVerifier`) plus a minimal `DemoMarketplace`, tested and deployed
