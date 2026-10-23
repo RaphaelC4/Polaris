@@ -1,0 +1,24 @@
+# Copy to gltest.config.yaml and fill in your own funded StudioNet keys.
+# gltest.config.yaml is gitignored - never commit real private keys.
+#
+# accounts[0] = deployer / reader identity
+# accounts[1] = buyer  (alice)
+# accounts[2] = seller (bob)
+#
+# Fund them from the Studio web wallet (studio.genlayer.com), then run:
+#     .venv\Scripts\python.exe scripts\preflight.py
+networks:
+  default: studionet
+  studionet:
+    accounts:
+      - "REPLACE_WITH_DEPLOYER_PRIVATE_KEY"
+      - "REPLACE_WITH_BUYER_PRIVATE_KEY"
+      - "REPLACE_WITH_SELLER_PRIVATE_KEY"
+    from: "REPLACE_WITH_DEPLOYER_PRIVATE_KEY"
+    leader_only: true
+    default_wait_interval: 3000
+    default_wait_retries: 200
+
+paths:
+  contracts: contracts
+  artifacts: artifacts

@@ -1,0 +1,23 @@
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# secrets - gltest.config.yaml holds funded account private keys
+gltest.config.yaml
+.env
+.env.*
+
+# local tooling / scratch
+.diag/
+.hallmark/
+artifacts/
+references/
+*.zip
+
+# os / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polaris — GenLayer review gate</title>
+<meta name="description" content="Polaris is a two-tier anti-fake-review gate on GenLayer StudioNet: a deterministic evidence gate on every submission, then independent AI validators judging authenticity through the Equivalence Principle. Live consensus, live AI, no mocks.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 27 9.5v13L16 29 5 22.5v-13Z' fill='none' stroke='%23A78BFA' stroke-width='2'/%3E%3Cpath d='m11 16 3.5 3.5L21 13' fill='none' stroke='%23A78BFA' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=20261020c">
+</head>
+<body>
+
+<div class="orb orb-a" aria-hidden="true"></div>
+<div class="orb orb-b" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="nav-wrap">
+  <nav class="nav" aria-label="Sections">
+    <a class="brand" href="#overview" data-tab-link="overview">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M24 12c0 6.6274-5.3726 12-12 12S0 18.6274 0 12c0-1.8257.4071-3.5554 1.1374-5.1051C.6514 8.1257.433 9.3446.433 10.4863c0 5.4334 4.3868 6.2203 6.2537 6.2023 2.8371-.0257 6.1543-1.416 8.9485-3.9909l-.4714 2.6494c-.1054.606.2906 1.1392.8957 1.1426h.2503c.6274 0 1.0732-.5108 1.1863-1.1426l1.0063-5.6622c.12-.6283-.2932-1.14-.9214-1.14h-5.6726c-.6309 0-1.2077.3342-1.32.9677l-.0446.2554c-.09.6026.33 1.0569.9317 1.0569h2.9589a9.48 9.48 0 0 0-.1414.1388c-2.04 1.9312-4.5558 2.988-6.6403 2.988-2.0803 0-4.41-1.3123-4.41-4.2686C3.2426 3.5546 8.9906 0 12 0c6.6137 0 12 5.3726 12 12"/></svg>
+      </span>
+      <span class="brand-name">Polaris</span>
+    </a>
+    <div class="nav-links" role="tablist" aria-label="Dashboard sections">
+      <button role="tab" id="tab-overview"  aria-controls="panel-overview"  aria-selected="true"  tabindex="0"  data-tab="overview">Overview</button>
+      <button role="tab" id="tab-reviews"   aria-controls="panel-reviews"   aria-selected="false" tabindex="-1" data-tab="reviews">Reviews</button>
+      <button role="tab" id="tab-lookup"    aria-controls="panel-lookup"    aria-selected="false" tabindex="-1" data-tab="lookup">Lookup</button>
+      <button role="tab" id="tab-contracts" aria-controls="panel-contracts" aria-selected="false" tabindex="-1" data-tab="contracts">Contracts</button>
+      <button role="tab" id="tab-test"      aria-controls="panel-test"      aria-selected="false" tabindex="-1" data-tab="test">Marketplace</button>
+    </div>
+    <div class="nav-actions">
+      <button class="btn small wallet-btn" id="walletBtn" type="button">
+        <span id="walletLabel">Connect wallet</span>
+        <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13"><path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h8.5v2M2.5 5.5v6A1.5 1.5 0 0 0 4 13h9a1 1 0 0 0 1-1V7H4a1.5 1.5 0 0 1-1.5-1.5Zm9 3.5h.01" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      </button>
+      <button class="mini-btn wallet-disconnect" id="walletDisconnect" type="button"
+              title="Disconnect wallet" aria-label="Disconnect wallet" hidden>
+        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M6 2.5H4A1.5 1.5 0 0 0 2.5 4v8A1.5 1.5 0 0 0 4 13.5h2M10.5 8H14m0 0-2.5-2.5M14 8l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="nav-status" id="netStatus">
+      <span class="dot" id="netDot" aria-hidden="true"></span>
+      <span id="netLabel">StudioNet</span>
+    </div>
+  </nav>
+</header>
+
+<main id="top">
+
+  <!-- ══════════════════ OVERVIEW ══════════════════ -->
+  <section class="panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
+
+    <div class="hero">
+      <div class="hero-media" aria-hidden="true">
+        <img class="hero-img" src="assets/creation-hands.jpg?v=20261018e" alt="" width="1672" height="941" fetchpriority="high" decoding="async">
+        <span class="hero-glow"></span>
+        <span class="hero-scrim"></span>
+      </div>
+
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <span class="eyebrow">GenLayer StudioNet &middot; chain 61999</span>
+          <h1>Reviews that have to<br><span class="em">prove themselves</span>.</h1>
+          <p class="lede">A two-tier anti-fake-review gate. Tier 1 is a deterministic evidence
+            gate every submission must pass; Tier 2 runs the review through the Equivalence
+            Principle, where independent AI validators judge its authenticity and have to agree.
+            Real consensus, real AI validators, no mocks.</p>
+        </div>
+
+        <div class="hero-cta">
+          <a class="btn" href="#reviews" data-tab-link="reviews">
+            <span>Open the record</span>
+            <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13"><path d="M4.5 11.5 11.5 4.5M6 4.5h5.5V10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+          <a class="btn ghost" href="#lookup" data-tab-link="lookup">
+            <span>Interrogate a review</span>
+            <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13"><path d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10Zm3.6.6 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ══════════════════ REVIEWS ══════════════════ -->
+  <section class="panel" id="panel-reviews" role="tabpanel" aria-labelledby="tab-reviews" data-panel="reviews" hidden>
+    <div class="panel-media" aria-hidden="true">
+      <img class="panel-img" src="assets/ancient-dialogue.jpg?v=20261020c" alt="" width="1024" height="1536" decoding="async">
+      <span class="panel-scrim"></span>
+    </div>
+    <div class="section">
+      <header class="section-head">
+        <span class="eyebrow">the ledger</span>
+        <h2>Every review, <span class="em">verified</span>.</h2>
+        <p class="section-sub">Rows stream live from <code class="mono">gen_call</code>. Open one
+          to read the review text, the AI verdict and its confidence.</p>
+      </header>
+
+      <form class="product-bar" id="productForm">
+        <label class="eyebrow" for="productInput">product id</label>
+        <input class="mono" id="productInput" spellcheck="false" autocomplete="off"
+               value="aurora-headphones" aria-label="Product id">
+        <button class="btn small" type="submit">
+          <span>Load</span>
+          <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </button>
+      </form>
+
+      <div class="bezel">
+        <div class="core table-core">
+          <div class="table-toolbar">
+            <span class="eyebrow" id="tableProduct">aurora-headphones</span>
+            <span class="tiny dim" id="tableCount">&ndash;</span>
+          </div>
+          <div class="table-head" aria-hidden="true">
+            <span>purchase id</span><span>score</span><span>verdict</span>
+            <span>confidence</span><span>appeal</span>
+          </div>
+          <div id="reviewList" class="review-list">
+            <div class="empty-line">Reading the chain&hellip;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ LOOKUP ══════════════════ -->
+  <section class="panel" id="panel-lookup" role="tabpanel" aria-labelledby="tab-lookup" data-panel="lookup" hidden>
+    <div class="panel-media" aria-hidden="true">
+      <img class="panel-img" src="assets/ancient-inquiry.jpg?v=20261020d" alt="" width="1024" height="1270" decoding="async">
+      <span class="panel-scrim"></span>
+    </div>
+    <div class="section">
+      <header class="section-head">
+        <span class="eyebrow">point lookup</span>
+        <h2>Interrogate any <span class="em">review</span>.</h2>
+      </header>
+
+      <div class="lookup-wrap">
+        <form class="lookup glass-pill" id="lookupForm">
+          <span class="lookup-icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="15" height="15"><path d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10Zm3.6.6 3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </span>
+          <input id="lookupInput" class="mono" placeholder="purchase id &mdash; try ord-live-1"
+                 spellcheck="false" autocomplete="off" aria-label="Purchase id">
+          <button class="btn small" type="submit">
+            <span>Query</span>
+            <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </button>
+        </form>
+
+        <div class="detail-slot" id="detailSlot">
+          <div class="bezel dim-bezel">
+            <div class="core detail-empty">
+              <span class="empty-mark" aria-hidden="true">&#9671;</span>
+              <p>Awaiting a purchase id. Try
+                <button class="linkish mono" type="button" data-try="ord-live-1">ord-live-1</button>,
+                <button class="linkish mono" type="button" data-try="ord-denied-1">ord-denied-1</button> or
+                <button class="linkish mono" type="button" data-try="ord-pending-1">ord-pending-1</button>.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ CONTRACTS ══════════════════ -->
+  <section class="panel" id="panel-contracts" role="tabpanel" aria-labelledby="tab-contracts" data-panel="contracts" hidden>
+    <div class="section">
+      <header class="section-head">
+        <span class="eyebrow">on-chain contracts</span>
+        <h2>Deployed to <span class="em">StudioNet</span>.</h2>
+        <p class="section-sub"><code class="mono">ReviewVerifier</code> holds the two-tier gate;
+          <code class="mono">DemoMarketplace</code> holds the order lifecycle. Both were deployed
+          by <code class="mono">scripts\deploy.py</code>, which wrote this
+          <code class="mono">config.json</code>.</p>
+      </header>
+
+      <aside class="hero-panel contracts-panel">
+        <div class="bezel">
+          <div class="core panel-core">
+            <div class="panel-head">
+              <span class="eyebrow">network</span>
+              <span class="live-tag" id="rpcTag"><span class="pulse"></span>reads live</span>
+            </div>
+
+            <div class="net-grid">
+              <div class="net-cell">
+                <span class="net-k">network</span>
+                <span class="net-v mono">StudioNet</span>
+              </div>
+              <div class="net-cell">
+                <span class="net-k">chain id</span>
+                <span class="net-v mono" id="chainId">&ndash;</span>
+              </div>
+            </div>
+
+            <div class="addr-block">
+              <span class="net-k">review_verifier</span>
+              <div class="addr-line">
+                <code class="mono" id="addrVerifier">&ndash;</code>
+                <button class="copy" type="button" data-copy="verifier" title="Copy verifier address" aria-label="Copy verifier address">
+                  <svg viewBox="0 0 16 16" width="12" height="12"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 5.5v-1A1.5 1.5 0 0 0 9 3H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="addr-block">
+              <span class="net-k">demo_marketplace</span>
+              <div class="addr-line">
+                <code class="mono" id="addrMarket">&ndash;</code>
+                <button class="copy" type="button" data-copy="marketplace" title="Copy marketplace address" aria-label="Copy marketplace address">
+                  <svg viewBox="0 0 16 16" width="12" height="12"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 5.5v-1A1.5 1.5 0 0 0 9 3H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="addr-block">
+              <span class="net-k">reader identity</span>
+              <div class="addr-line">
+                <code class="mono" id="addrReader">&ndash;</code>
+                <button class="copy" type="button" data-copy="reader" title="Copy reader address" aria-label="Copy reader address">
+                  <svg viewBox="0 0 16 16" width="12" height="12"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 5.5v-1A1.5 1.5 0 0 0 9 3H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <p class="panel-foot">read path: <code class="mono">gen_call</code> (unsigned
+              simulation &mdash; no wallet needed) &middot; writes signed in MetaMask</p>
+          </div>
+        </div>
+      </aside>
+
+      <div class="spec-grid">
+        <div class="spec-cell">
+          <span class="net-k">validators</span>
+          <span class="net-v mono">5</span>
+        </div>
+        <div class="spec-cell">
+          <span class="net-k">rotations</span>
+          <span class="net-v mono">3</span>
+        </div>
+        <div class="spec-cell">
+          <span class="net-k">validUntil</span>
+          <span class="net-v mono">0</span>
+        </div>
+        <div class="spec-cell">
+          <span class="net-k">leader_only</span>
+          <span class="net-v mono">&rarr; 0x80</span>
+        </div>
+      </div>
+      <p class="spec-note">Every write targets <code class="mono">ConsensusMain</code> exactly as
+        <code class="mono">genlayer_py</code> does &mdash; byte-identical calldata, verified by
+        <code class="mono">scripts\parity_reference.py</code> against
+        <code class="mono">frontend\test_encode.html</code>.</p>
+    </div>
+  </section>
+
+  <!-- ══════════════════ MARKETPLACE ══════════════════ -->
+  <section class="panel" id="panel-test" role="tabpanel" aria-labelledby="tab-test" data-panel="test" hidden>
+    <div class="panel-media" aria-hidden="true">
+      <img class="panel-img" src="assets/ancient-assembly.jpg?v=20261020c" alt="" width="941" height="1672" decoding="async">
+      <span class="panel-scrim"></span>
+    </div>
+    <div class="section">
+      <header class="section-head">
+        <span class="eyebrow">marketplace &middot; live writes</span>
+        <h2>Work an order through <span class="em">the gate</span>.</h2>
+        <p class="section-sub">List, buy, deliver, use, register, review, verify, appeal &mdash;
+          every write is signed by the connected MetaMask account, and the UI only surfaces the
+          actions that account may actually sign for a given order. The contracts enforce the same
+          rules on-chain.</p>
+      </header>
+
+      <div class="bezel bench-full">
+        <div class="core role-banner">
+          <div class="role-now">
+            <span class="eyebrow">acting as</span>
+            <div class="role-line">
+              <span class="pill role-chip" id="roleChip" data-role="none">not connected</span>
+              <code class="mono role-addr" id="roleAddr">connect MetaMask to begin</code>
+            </div>
+            <p class="role-hint tiny" id="roleHint">Connect MetaMask to detect your role.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tx-line" id="txStatus" hidden></div>
+
+      <div class="bench-grid bench-two">
+        <div class="bezel">
+          <div class="core">
+            <div class="cell-head">
+              <span class="eyebrow">listings</span>
+              <button class="mini-btn" id="marketRefresh" type="button" aria-label="Refresh listings">
+                <svg viewBox="0 0 16 16" width="12" height="12"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <div class="listing-grid" id="listingGrid">
+              <div class="empty-line">Loading listings&hellip;</div>
+            </div>
+            <form class="action" id="listForm">
+              <div class="action-head"><code class="mono">list_item</code><span class="tiny dim">you become the seller</span></div>
+              <div class="action-fields">
+                <input class="mono" name="productId" placeholder="product id" required autocomplete="off">
+                <input name="title" placeholder="product title" required autocomplete="off">
+                <input name="price" type="number" min="0" placeholder="price (GEN)" required>
+              </div>
+              <button class="btn small ghost" type="submit"><span>Publish listing</span><span class="btn-ico" aria-hidden="true">&#8599;</span></button>
+            </form>
+          </div>
+        </div>
+
+        <div class="bezel">
+          <div class="core">
+            <div class="cell-head">
+              <span class="eyebrow">order book</span>
+              <span class="tiny dim" id="orderCount">&mdash;</span>
+            </div>
+            <div class="order-book" id="orderBook">
+              <div class="empty-line">Loading orders&hellip;</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bezel bench-full order-detail" id="orderDetail" hidden>
+        <div class="core" id="orderDetailBody"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+
+    <div class="footer-cta">
+      <div class="footer-lead">
+        <span class="brand footer-brand">
+          <span class="brand-name">Polaris</span>
+        </span>
+
+        <h2 class="footer-head">Reviews that have to<br><span class="em">prove themselves</span>.</h2>
+        <p class="footer-sub">A deterministic evidence gate on every submission, then independent
+          AI validators who have to agree. Built on GenLayer StudioNet.</p>
+
+        <div class="footer-actions">
+          <a class="btn" href="#reviews" data-tab-link="reviews">
+            <span>Open the record</span>
+            <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13"><path d="M4.5 11.5 11.5 4.5M6 4.5h5.5V10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+          <a class="btn ghost" href="https://docs.genlayer.com" target="_blank" rel="noopener">
+            <span>Read the GenLayer docs</span>
+            <span class="btn-ico" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13"><path d="M4.5 11.5 11.5 4.5M6 4.5h5.5V10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+        </div>
+      </div>
+
+      <nav class="footer-cols" aria-label="Footer">
+        <div class="footer-col">
+          <span class="net-k">Sections</span>
+          <a href="#overview" data-tab-link="overview">Overview</a>
+          <a href="#reviews" data-tab-link="reviews">Reviews</a>
+          <a href="#lookup" data-tab-link="lookup">Lookup</a>
+          <a href="#contracts" data-tab-link="contracts">Contracts</a>
+          <a href="#test" data-tab-link="test">Marketplace</a>
+        </div>
+        <div class="footer-col">
+          <span class="net-k">GenLayer</span>
+          <a href="https://genlayer.com" target="_blank" rel="noopener">Website <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://docs.genlayer.com" target="_blank" rel="noopener">Documentation <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://studio.genlayer.com" target="_blank" rel="noopener">Studio <span aria-hidden="true">&#8599;</span></a>
+          <a href="https://github.com/genlayerlabs/genlayer-docs" target="_blank" rel="noopener">Docs on GitHub <span aria-hidden="true">&#8599;</span></a>
+        </div>
+      </nav>
+    </div>
+
+    <div class="footer-bar">
+      <span>&copy; 2026 Polaris</span>
+      <span class="mono">GenLayer StudioNet &middot; chain 61999</span>
+    </div>
+
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="vendor/ethers.umd.min.js?v=20261020c"></script>
+    <script src="gl-codec.js?v=20261020c"></script>
+    <script src="wallet.js?v=20261020c"></script>
+    <script src="app.js?v=20261020c"></script>
+</body>
+</html>

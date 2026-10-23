@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PENDING</title>
+</head>
+<body>
+  <pre id="out">computing…</pre>
+  <script src="vendor/ethers.umd.min.js"></script>
+  <script src="gl-codec.js"></script>
+  <script>
+  /* Parity harness: computes the exact addTransaction calldata the app
+     would send for a fixed fixture, mirroring genlayer_py's write path.
+     Headless-browser run dumps the result into document.title so the
+     caller can diff it against the Python reference. */
+
+  const SENDER    = "0x2b13bcb1281295aa7cb77326c02bee7768f78ab0";
+  const RECIPIENT = "0x7f6e31c2d72c284c7ff4ceb1cbe34a776417617a"; /* verifier */
+  const VALIDATORS = 5, MAX_ROTATIONS = 3;
+
+  /* fixture — must match scripts/parity_reference.py */
+  const FIXTURE = {
+    method: "submit_review",
+    args: ["parity-check-1", 5, "hello", "https://example.com/p", ""]
+  };
+
+  /* baked ConsensusMain ABI — mirrors genlayer_py CONSENSUS_MAIN_ABI
+     (uint256 fields, always 6 inputs incl. validUntil, payable) */
+  const CONS_ABI = [
+    {
+      type: "function", name: "addTransaction", stateMutability: "payable",
+      inputs: [
+        { name: "_sender",    type: "address" },
+        { name: "_recipient", type: "address" },
+        { name: "_numOfInitialValidators", type: "uint256" },
+        { name: "_maxRotations", type: "uint256" },
+        { name: "_calldata",  type: "bytes" },
+        { name: "_validUntil", type: "uint256" }
+      ],
+      outputs: []
+    }
+  ];
+
+  function glPayload(method, args) {
+    const obj = { method };
+    if (args && args.length) obj.args = args;
+    /* leader_only=false -> Python rlp(False) = 0x80 */
+    return rlpEncode([calldataEncode(obj), new Uint8Array(0)]);
+  }
+
+  function buildAddTxData(sender, recipient, method, args) {
+    const iface = new ethers.Interface(CONS_ABI);
+    const fn = iface.getFunction("addTransaction");
+    const payload = "0x" + hex(glPayload(method, args));
+    const base = [sender, recipient, VALIDATORS, MAX_ROTATIONS, payload];
+    const callArgs = fn.inputs.length >= 6 ? [...base, 0] : base;
+    return iface.encodeFunctionData("addTransaction", callArgs);
+  }
+
+  try {
+    const data = buildAddTxData(SENDER, RECIPIENT, FIXTURE.method, FIXTURE.args);
+    document.title = data.toLowerCase();
+    document.getElementById("out").textContent = data;
+  } catch (e) {
+    document.title = "ERROR:" + e.message;
+    document.getElementById("out").textContent = e.stack || String(e);
+  }
+  </script>
+</body>
+</html>
