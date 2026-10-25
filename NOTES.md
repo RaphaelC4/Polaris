@@ -193,3 +193,28 @@
   demo_e2e_direct_mode.py, old diagnostics)
 - frontend/ = VERITAS dashboard (static, read-only, live gen_call
   reads; see Frontend section above).
+
+## v0.2.0 - purchase authentication (2026-10-25, reviewer feedback)
+- Reviewer finding: register_purchase trusted caller-supplied
+  purchase/product/seller, so any wallet could fabricate purchases or
+  squat on another buyer's purchase id.
+- Fix: ReviewVerifier(marketplace, cooldown_seconds) is bound to one
+  marketplace. register_purchase(purchase_id) reads the order through
+  gl.get_contract_at(Address(bytes)).view().get_purchase_safe(...) and
+  requires: order exists, recorded buyer == tx sender, state in
+  (DELIVERED, USED). Product/seller come from the marketplace record.
+- DemoMarketplace gained get_purchase_safe (non-reverting, {} if unknown).
+- Cooldown now applies to ALL of a buyer's reviews (same-product exemption
+  removed). cooldown_seconds is a constructor arg: the live suite deploys
+  `verifier` with 0 and a separate `cooldown_verifier` with 3600; deploy.py
+  uses 3600.
+- Frontend: success = THIS tx's own record (eth_getTransactionByHash ->
+  classifyTx in gl-codec.js: ACCEPTED/FINALIZED + leader execution SUCCESS).
+  State-effect polling removed (a squatter's tx could fake the effect).
+  tests/js/classify_tx.test.js covers it.
+- Tests need two funded accounts now (every purchase is a real order).
+  New tests/test_purchase_authentication.py has the attack cases.
+- NOT YET DONE: redeploy on StudioNet, run the suite, collect tx hashes.
+  The classifier's field names (status_name, consensus_data.leader_receipt
+  [0].execution_result) follow genlayer_py/gltest conventions but were not
+  verified against a live eth_getTransactionByHash response.

@@ -5,16 +5,17 @@ Tier-2 tests run genuine StudioNet AI validators through the Equivalence
 Principle, so assertions accept the human-review outcome (MANUAL_CHECK)
 whenever the model confidence is low, and record every verdict reason.
 
-Cooldown safety: all operator submissions land on the fixed SHARED_PRODUCT
-(same-product submissions are exempt from the per-buyer cooldown); the
-cross-product cooldown rule gets its own dedicated test.
+Every purchase here is a real DemoMarketplace order (seller = operator,
+buyer = alice) authenticated by the verifier. The purchase-authentication
+attack cases live in test_purchase_authentication.py. The main `verifier`
+is deployed with cooldown 0; the cooldown rule is tested on
+`cooldown_verifier` (production value, 3600s).
 """
 import pytest
 
 from conftest import (
     AUTHENTIC_TEXT,
     FAKE_TEXT,
-    PHANTOM_SELLER,
     SHARED_PRODUCT,
     STATUS_DENIED,
     STATUS_LIVE,
@@ -29,80 +30,50 @@ from gltest.assertions import tx_execution_failed
 
 
 # ------------------------------------------------------- Tier 1: registration
-def test_register_and_view_roundtrip(verifier, register_purchase, operator):
-    purchase_id = new_purchase_id()
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
+def test_register_and_view_roundtrip(
+    verifier, make_order, register_purchase, buyer, operator
+):
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
 
     record = verifier.get_review(args=[purchase_id]).call()
     assert record["purchase_id"] == purchase_id
+    # product / buyer / seller come from the marketplace record
     assert record["product_id"] == SHARED_PRODUCT
-    assert record["buyer"] == hex_addr(operator)
-    assert record["seller"] == PHANTOM_SELLER
+    assert record["buyer"] == hex_addr(buyer)
+    assert record["seller"] == hex_addr(operator)
     assert record["rating"] == 0
     assert record["status"] == STATUS_PENDING
     assert record["appealed"] is False
     assert verifier.is_review_allowed(args=[purchase_id]).call() is True
 
 
-def test_register_rejects_buyer_equals_seller(verifier, operator):
-    conn = verifier.connect(operator)
-    receipt = conn.register_purchase(
-        args=[
-            new_purchase_id(),
-            hex_addr(operator),
-            SHARED_PRODUCT,
-            hex_addr(operator),
-        ]
-    ).transact()
+def test_register_rejects_duplicate_purchase_id(
+    make_order, register_purchase, buyer
+):
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
+    receipt = register_purchase(buyer, purchase_id, expect_ok=False)
     assert tx_execution_failed(receipt)
-
-
-def test_register_rejects_non_hex_seller(verifier, operator):
-    receipt = (
-        verifier.connect(operator)
-        .register_purchase(
-            args=[new_purchase_id(), hex_addr(operator), SHARED_PRODUCT, "not-a-hex-address"]
-        )
-        .transact()
-    )
-    assert tx_execution_failed(receipt)
-
-
-def test_register_rejects_duplicate_purchase_id(verifier, operator):
-    purchase_id = new_purchase_id()
-    args = [purchase_id, hex_addr(operator), SHARED_PRODUCT, PHANTOM_SELLER]
-    assert_ok(verifier.register_purchase(args=args).transact(), "first register")
-    receipt = verifier.register_purchase(args=args).transact()
-    assert tx_execution_failed(receipt)
-
-
-def test_register_rejects_mismatched_buyer(verifier, operator, alice_ready):
-    """Self-service registration: the sender must BE the declared buyer."""
-    receipt = (
-        verifier.connect(alice_ready)
-        .register_purchase(
-            args=[new_purchase_id(), hex_addr(operator), SHARED_PRODUCT, PHANTOM_SELLER]
-        )
-        .transact()
-    )
-    assert tx_execution_failed(receipt)
-    assert "buyer may register" in receipt_error(receipt)
+    assert "already registered" in receipt_error(receipt)
 
 
 # --------------------------------------------------------- Tier 1: submission
-def test_submit_requires_registered_purchase(verifier, operator):
+def test_submit_requires_registered_purchase(verifier, buyer):
     receipt = (
-        verifier.connect(operator)
+        verifier.connect(buyer)
         .submit_review(args=[new_purchase_id("ghost"), 5, AUTHENTIC_TEXT])
         .transact()
     )
     assert tx_execution_failed(receipt)
 
 
-def test_submit_only_buyer_may_review(verifier, register_purchase, operator, alice_ready):
-    """A purchase registered by alice cannot be reviewed by anyone else."""
-    purchase_id = new_purchase_id()
-    register_purchase(alice_ready, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
+def test_submit_only_buyer_may_review(
+    verifier, make_order, register_purchase, buyer, operator
+):
+    """A purchase registered by its buyer cannot be reviewed by anyone else."""
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
     receipt = (
         verifier.connect(operator)
         .submit_review(args=[purchase_id, 5, AUTHENTIC_TEXT])
@@ -111,32 +82,32 @@ def test_submit_only_buyer_may_review(verifier, register_purchase, operator, ali
     assert tx_execution_failed(receipt)
 
 
-def test_submit_rating_and_text_bounds(verifier, register_purchase, operator):
-    purchase_id = new_purchase_id()
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
-    conn = verifier.connect(operator)
+def test_submit_rating_and_text_bounds(verifier, make_order, register_purchase, buyer):
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
+    conn = verifier.connect(buyer)
     for rating, text in ((0, AUTHENTIC_TEXT), (6, AUTHENTIC_TEXT), (5, "too short")):
         receipt = conn.submit_review(args=[purchase_id, rating, text]).transact()
         assert tx_execution_failed(receipt), f"expected revert for rating={rating}"
 
 
-def test_duplicate_review_rejected(verifier, register_purchase, submit_review, operator):
-    purchase_id = new_purchase_id()
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
-    submit_review(operator, purchase_id, 5, AUTHENTIC_TEXT)
-    receipt = submit_review(
-        operator, purchase_id, 4, AUTHENTIC_TEXT, expect_ok=False
-    )
+def test_duplicate_review_rejected(
+    verifier, make_order, register_purchase, submit_review, buyer
+):
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
+    submit_review(buyer, purchase_id, 5, AUTHENTIC_TEXT)
+    receipt = submit_review(buyer, purchase_id, 4, AUTHENTIC_TEXT, expect_ok=False)
     assert tx_execution_failed(receipt)
 
 
 # ------------------------------------------------- Tier 2: real AI verdicts
 @pytest.fixture(scope="session")
-def authentic_review(verifier, register_purchase, submit_review, operator):
+def authentic_review(verifier, make_order, register_purchase, submit_review, buyer):
     """Submit + verify one authentic review (real AI), once per session."""
-    purchase_id = new_purchase_id("auth")
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
-    submit_review(operator, purchase_id, 5, AUTHENTIC_TEXT)
+    purchase_id = make_order("USED")
+    register_purchase(buyer, purchase_id)
+    submit_review(buyer, purchase_id, 5, AUTHENTIC_TEXT)
     receipt = verifier.verify_review(args=[purchase_id]).transact()
     assert_ok(receipt, f"verify_review({purchase_id})")
     record = verifier.get_review(args=[purchase_id]).call()
@@ -147,11 +118,11 @@ def authentic_review(verifier, register_purchase, submit_review, operator):
 
 
 @pytest.fixture(scope="session")
-def fake_review(verifier, register_purchase, submit_review, operator):
+def fake_review(verifier, make_order, register_purchase, submit_review, buyer):
     """Submit + verify one spam review (real AI), once per session."""
-    purchase_id = new_purchase_id("fake")
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
-    submit_review(operator, purchase_id, 5, FAKE_TEXT)
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
+    submit_review(buyer, purchase_id, 5, FAKE_TEXT)
     receipt = verifier.verify_review(args=[purchase_id]).transact()
     assert_ok(receipt, f"verify_review({purchase_id})")
     record = verifier.get_review(args=[purchase_id]).call()
@@ -180,14 +151,14 @@ def test_fake_review_verdict(verifier, fake_review):
 
 # ------------------------------------------------------------------ governance
 def test_appeal_sends_finished_review_back_to_pending(
-    verifier, authentic_review, operator
+    verifier, authentic_review, buyer
 ):
     """Buyer appeal from any final verdict (LIVE/DENIED/MANUAL_CHECK) -> PENDING.
 
     The appeal is a governance re-roll for the rotated validator set, not
     a human override. It is allowed exactly once per review.
     """
-    conn = verifier.connect(operator)
+    conn = verifier.connect(buyer)
 
     record = verifier.get_review(args=[authentic_review]).call()
     assert record["status"] in (STATUS_LIVE, STATUS_DENIED, STATUS_MANUAL), record
@@ -212,10 +183,10 @@ def test_appeal_sends_finished_review_back_to_pending(
     assert "can be appealed" in receipt_error(receipt)
 
 
-def test_appeal_only_the_buyer(verifier, fake_review, alice_ready):
+def test_appeal_only_the_buyer(verifier, fake_review, operator):
     """Only the reviewer (buyer) may appeal a review."""
     receipt = (
-        verifier.connect(alice_ready)
+        verifier.connect(operator)
         .appeal_review(args=[fake_review, "not my review"])
         .transact()
     )
@@ -249,28 +220,39 @@ def test_stats_view(verifier):
 
 
 # --------------------------------------------------------------- cooldown rule
-def test_cooldown_blocks_cross_product_review(
-    verifier, register_purchase, submit_review, operator
+def test_cooldown_blocks_second_review_same_product(
+    cooldown_verifier, make_order, register_purchase, submit_review, buyer
 ):
-    """Second review by the same buyer on a DIFFERENT product within 1h reverts.
+    """A second review by the same buyer within the cooldown reverts - even
+    for the SAME product. Purchases are authenticated now, so the old
+    same-product exemption is gone: two genuine orders of one product are
+    still rate-limited."""
+    first = make_order("DELIVERED", SHARED_PRODUCT)
+    second = make_order("DELIVERED", SHARED_PRODUCT)
+    register_purchase(buyer, first, contract=cooldown_verifier)
+    register_purchase(buyer, second, contract=cooldown_verifier)
 
-    The first submission lands on SHARED_PRODUCT (exempt from its own
-    cooldown); the immediate cross-product attempt must revert.
-    """
-    purchase_id = new_purchase_id()
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
-    submit_review(operator, purchase_id, 4, AUTHENTIC_TEXT)
-
-    other_id = new_purchase_id()
-    register_purchase(operator, other_id, new_purchase_id("prod"), PHANTOM_SELLER)
-    receipt = submit_review(operator, other_id, 4, AUTHENTIC_TEXT, expect_ok=False)
+    submit_review(buyer, first, 4, AUTHENTIC_TEXT, contract=cooldown_verifier)
+    receipt = submit_review(
+        buyer, second, 4, AUTHENTIC_TEXT, expect_ok=False, contract=cooldown_verifier
+    )
     assert tx_execution_failed(receipt)
     assert "cooldown" in receipt_error(receipt).lower()
 
 
-def test_is_review_allowed_transitions(verifier, register_purchase, submit_review, operator):
-    purchase_id = new_purchase_id()
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
+def test_config_exposes_trust_anchor(verifier, cooldown_verifier, marketplace):
+    market = str(marketplace.address).lower()
+    cfg = verifier.get_config().call()
+    assert cfg["marketplace"] == market
+    assert cfg["cooldown_seconds"] == 0
+    assert cooldown_verifier.get_config().call()["cooldown_seconds"] == 3600
+
+
+def test_is_review_allowed_transitions(
+    verifier, make_order, register_purchase, submit_review, buyer
+):
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
     assert verifier.is_review_allowed(args=[purchase_id]).call() is True
-    submit_review(operator, purchase_id, 3, AUTHENTIC_TEXT)
+    submit_review(buyer, purchase_id, 3, AUTHENTIC_TEXT)
     assert verifier.is_review_allowed(args=[purchase_id]).call() is False

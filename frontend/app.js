@@ -428,8 +428,10 @@ document.addEventListener("DOMContentLoaded", () => {
      sim_getConsensusContract -> {address, abi}
      data = RLP([calldata.encode({method,args}), leader_only])
      tx   = addTransaction(sender, to, validators=5, rotations=3, data)
-   Signed by MetaMask via eth_sendTransaction; success is confirmed by
-   re-reading the chain effect (works even while consensus is running).
+   Signed by MetaMask via eth_sendTransaction. Success is reported ONLY
+   from the transaction's own consensus record (classifyTx in gl-codec.js:
+   ACCEPTED/FINALIZED + execution SUCCESS) - never from shared chain
+   state, which another wallet's tx could also produce.
    ═══════════════════════════════════════════════════════════════════ */
 
 const VALIDATORS = 5;      /* studionet defaults from genlayer_py */
@@ -482,6 +484,7 @@ function txPhase(phase, label, hash, secs, detail) {
     sent: "sent — wallet confirmed",
     waiting: `in consensus… ${secs}s`,
     done: `accepted · ${secs}s`,
+    final: `finalized · ${secs}s`,
     error: `failed${detail ? " — " + detail : ""}`,
   };
   const short = hash ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : "";
@@ -492,33 +495,36 @@ function txPhase(phase, label, hash, secs, detail) {
     (short ? `<code class="mono tx-hash">${esc(short)}</code>` : "");
 }
 
-async function waitForEffect(hash, effect, label, timeoutMs) {
+/* Wait for THIS transaction's own outcome. The record comes from
+   eth_getTransactionByHash and is classified by classifyTx(): success only
+   when consensus ACCEPTED/FINALIZED and the leader's execution_result is
+   SUCCESS. A reverted tx, an UNDETERMINED/CANCELED round, or a tx whose
+   result cannot be read is never reported as success. */
+async function waitForTx(hash, label, timeoutMs) {
   const t0 = Date.now();
   const deadline = t0 + (timeoutMs || 15 * 60 * 1000);
   txPhase("sent", label, hash, 0);
   while (Date.now() < deadline) {
     await sleep(4000);
     const secs = Math.round((Date.now() - t0) / 1000);
-    let receipt = null;
-    try { receipt = await rpc("eth_getTransactionReceipt", [hash]); } catch { /* hiccup */ }
-    if (receipt && (receipt.status === "0x0" || receipt.status === 0)) {
-      txPhase("error", label, hash, secs, "reverted on-chain (gate rule or state)");
-      throw new Error(`${label}: transaction reverted (${hash})`);
+    let tx = null;
+    try { tx = await rpc("eth_getTransactionByHash", [hash]); } catch { /* hiccup */ }
+    const out = classifyTx(tx);
+    if (out.phase === "failed") {
+      txPhase("error", label, hash, secs, out.detail || "reverted on-chain");
+      throw new Error(`${label}: ${out.detail || "transaction failed"} (${hash})`);
     }
-    let ok = false;
-    if (effect) {
-      try { ok = await effect(); } catch { ok = false; }
-    } else if (receipt && (receipt.status === "0x1" || receipt.status === 1)) {
-      ok = true;
+    if (out.phase === "ok") {
+      txPhase(out.final ? "final" : "done", label, hash, secs);
+      return out;
     }
-    if (ok) { txPhase("done", label, hash, secs); return; }
     txPhase("waiting", label, hash, secs);
   }
   txPhase("error", label, hash, 900, "still pending after 15 min");
   throw new Error(`${label}: consensus still pending after 15 min (tx ${hash})`);
 }
 
-async function sendTx({ to, method, args = [], effect, label, timeoutMs }) {
+async function sendTx({ to, method, args = [], label, timeoutMs }) {
   if (!Wallet || !Wallet.isReady()) {
     throw new Error("Connect MetaMask (StudioNet) first");
   }
@@ -533,29 +539,7 @@ async function sendTx({ to, method, args = [], effect, label, timeoutMs }) {
     method: "eth_sendTransaction",
     params: [tx],
   });
-  return waitForEffect(hash, effect, label || method, timeoutMs);
-}
-
-/* effect helpers — true once the chain state reflects the write */
-const eff = {
-  product: (pid) => () => V.product(pid).then(() => true, () => false),
-  purchase: (pid, want) => () =>
-    V.purchase(pid).then((p) => p && p.state === want, () => false),
-  review: (pid, pred) => () => V.review(pid).then(pred, () => false),
-};
-
-function methodEffect(method, vals) {
-  switch (method) {
-    case "list_item": return eff.product(vals[0]);
-    case "buy": return eff.purchase(vals[1], "PAID");
-    case "mark_delivered": return eff.purchase(vals[0], "DELIVERED");
-    case "mark_used": return eff.purchase(vals[0], "USED");
-    case "register_purchase": return eff.review(vals[0], (r) => r.rating === 0);
-    case "submit_review": return eff.review(vals[0], (r) => r.rating > 0);
-    case "verify_review": return eff.review(vals[0], (r) => r.status !== "PENDING");
-    case "appeal_review": return eff.review(vals[0], (r) => r.appealed === true);
-    default: return null;
-  }
+  return waitForTx(hash, label || method, timeoutMs);
 }
 
 /* ───────────────────────── marketplace workbench ───────────────────
@@ -631,7 +615,9 @@ function orderActions(order, rev, addr) {
   const acts = [];
   if (order.state === "PAID" && a === order.seller) acts.push("mark_delivered");
   if (order.state === "DELIVERED" && a === order.buyer) acts.push("mark_used");
-  if (order.state === "USED" && a === order.buyer && !isReg(rev)) acts.push("register_purchase");
+  /* the verifier re-checks buyer + DELIVERED/USED against the marketplace
+     on-chain; this only decides whether to offer the button */
+  if ((order.state === "DELIVERED" || order.state === "USED") && a === order.buyer && !isReg(rev)) acts.push("register_purchase");
   if (rev && rev.rating === 0 && a === order.buyer) acts.push("submit_review");
   if (rev && rev.rating > 0 && rev.status === "PENDING") acts.push("verify_review");
   if (rev && FINISHED.includes(rev.status) && a === order.buyer && !rev.appealed) acts.push("appeal_review");
@@ -891,7 +877,7 @@ function closeDetail() {
 
 async function doWrite(to, method, args, timeoutMs) {
   try {
-    await sendTx({ to, method, args, effect: methodEffect(method, args), label: method, timeoutMs });
+    await sendTx({ to, method, args, label: method, timeoutMs });
     toast(`${method} accepted`);
     await refreshAll();
     return true;
@@ -914,7 +900,7 @@ async function runOrderAction(oid, method) {
   switch (method) {
     case "mark_delivered": args = [oid]; break;
     case "mark_used": args = [oid]; break;
-    case "register_purchase": args = [oid, order.buyer, order.product_id, order.seller]; break;
+    case "register_purchase": args = [oid]; break;
     case "verify_review": args = [oid]; break;
     case "appeal_review": args = [oid, "I believe this review is genuine"]; break;
     default: return;

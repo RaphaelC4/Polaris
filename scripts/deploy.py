@@ -15,6 +15,7 @@ import time
 
 RPC = "https://studio.genlayer.com/api"
 CHAIN_ID = 61999
+COOLDOWN_SECONDS = 3600  # minimum gap between two reviews by the same buyer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(ROOT, "frontend")
@@ -52,19 +53,24 @@ def main() -> int:
     buyer_addr = str(accounts[1].address) if len(accounts) > 1 else None
     seller_addr = str(accounts[2].address) if len(accounts) > 2 else None
 
-    print("[1/2] deploying ReviewVerifier() ...")
-    verifier = operator_factory.deploy(args=[], account=operator)
-    print(f"      -> {verifier.address}")
-
-    print("[2/2] deploying DemoMarketplace() ...")
+    # Order matters: the verifier is bound to ONE marketplace at deploy
+    # time and only trusts purchases recorded there.
+    print("[1/2] deploying DemoMarketplace() ...")
     marketplace = marketplace_factory.deploy(args=[], account=operator)
     print(f"      -> {marketplace.address}")
+
+    print(f"[2/2] deploying ReviewVerifier(marketplace, cooldown={COOLDOWN_SECONDS}) ...")
+    verifier = operator_factory.deploy(
+        args=[str(marketplace.address).lower(), COOLDOWN_SECONDS], account=operator
+    )
+    print(f"      -> {verifier.address}")
 
     config = {
         "rpc": RPC,
         "chainId": CHAIN_ID,
         "verifier": str(verifier.address),
         "marketplace": str(marketplace.address),
+        "cooldownSeconds": COOLDOWN_SECONDS,
         "reader": operator_addr,
         "buyer": buyer_addr,
         "seller": seller_addr,
