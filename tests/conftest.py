@@ -57,7 +57,6 @@ STATUS_LIVE = "LIVE"
 STATUS_DENIED = "DENIED"
 STATUS_MANUAL = "MANUAL_CHECK"
 
-ALICE_ADDRESS = "0x2b13bcb1281295aa7cb77326c02bee7768f78ab0"
 
 # Real-StudioNet review texts: written so a competent model separates them
 # (specific, experience-based details vs promotional spam).
@@ -117,13 +116,11 @@ def operator(default_account):
 
 @pytest.fixture(scope="session")
 def alice(accounts):
-    """Secondary account from gltest.config.yaml (second key in the list)."""
-    for acct in get_accounts():
-        if str(acct.address).lower() == ALICE_ADDRESS:
-            return acct
-    pytest.skip(
-        f"account {ALICE_ADDRESS} not found in gltest.config.yaml accounts"
-    )
+    """Buyer account: the SECOND key in gltest.config.yaml (accounts[1])."""
+    accts = get_accounts()
+    if len(accts) < 2:
+        pytest.skip("gltest.config.yaml needs at least two accounts (deployer, buyer)")
+    return accts[1]
 
 
 def _probe_funded(marketplace, account, label):
@@ -148,7 +145,7 @@ def _probe_funded(marketplace, account, label):
 @pytest.fixture(scope="session")
 def alice_ready(alice, marketplace):
     """Skip buyer-gated tests until the second account has StudioNet gas."""
-    return _probe_funded(marketplace, alice, f"alice ({ALICE_ADDRESS})")
+    return _probe_funded(marketplace, alice, f"buyer ({str(alice.address).lower()})")
 
 
 @pytest.fixture(scope="session")
