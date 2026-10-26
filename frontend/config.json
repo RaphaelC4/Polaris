@@ -1,10 +1,11 @@
 {
   "rpc": "https://studio.genlayer.com/api",
   "chainId": 61999,
-  "verifier": "0x5Bc3DDBfc2D8c8C41Bae5a6C10e1B9Ae909b6305",
-  "marketplace": "0xCD98B5a2fB33cD6fF80A6B8F3Dc8dDAa2DEF34b1",
-  "reader": "0x7b56902aedf906044E40e8821A6fc412Ad0808dB",
-  "buyer": "0x2B13BCB1281295Aa7Cb77326C02beE7768F78Ab0",
-  "seller": "0x85e021c0f2503f4b00cEE82CC8a422190194375b",
-  "deployedAt": 1792767021
+  "verifier": "0xE8C7CCFe172178B06581588FAeb0537A3C503C55",
+  "marketplace": "0xe0cf7a1b7D901d3FdB1C368bdBB6F8eE286764aF",
+  "cooldownSeconds": 3600,
+  "reader": "0x4a228Fc5441c121632e901910faf7ba8dE186627",
+  "buyer": "0x581bda3B315aE0Aa6CD9d637807179960c6c335d",
+  "seller": "0x065aB30f81E31e44263C85b7aECD45e05551a635",
+  "deployedAt": 1792982954
 }
