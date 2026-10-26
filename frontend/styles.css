@@ -1143,8 +1143,8 @@ html.flat .orb-a, html.flat .orb-b { animation: none; }
   animation: pulse 1.6s var(--ease-soft) infinite;
 }
 .tx-waiting .tx-word { color: var(--amber); }
-.tx-done .tx-dot { background: var(--emerald); }
-.tx-done .tx-word { color: var(--emerald); }
+.tx-done .tx-dot, .tx-final .tx-dot { background: var(--emerald); }
+.tx-done .tx-word, .tx-final .tx-word { color: var(--emerald); }
 .tx-error .tx-dot { background: var(--rose); }
 .tx-error .tx-word { color: var(--rose); }
 

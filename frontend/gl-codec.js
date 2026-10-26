@@ -163,3 +163,60 @@ function fromHex(s) {
   for (let i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
   return out;
 }
+
+/* ───────────────────── transaction outcome classifier ─────────────────
+   Decides, from the transaction's OWN consensus record (the object
+   eth_getTransactionByHash returns on StudioNet), whether THAT tx
+   executed successfully. The UI must never infer success from shared
+   chain state: another wallet's tx can produce the same state (for
+   example someone else registering the same purchase id), which would
+   make a reverted tx look successful.
+
+   Returns { phase, final, detail }:
+     phase "ok"      - consensus ACCEPTED/FINALIZED and the leader's
+                       execution_result is SUCCESS
+     phase "failed"  - the tx reverted (execution ERROR) or consensus
+                       ended UNDETERMINED / CANCELED / timed out
+     phase "pending" - anything else, including a missing record or an
+                       accepted tx whose execution result is not readable
+                       (never treated as success)
+   `final` is true only once the status is FINALIZED.
+   ─────────────────────────────────────────────────────────────────── */
+
+const GL_TX_STATUS = {
+  0: "UNINITIALIZED", 1: "PENDING", 2: "PROPOSING", 3: "COMMITTING",
+  4: "REVEALING", 5: "ACCEPTED", 6: "UNDETERMINED", 7: "FINALIZED",
+  8: "CANCELED", 9: "APPEAL_REVEALING", 10: "APPEAL_COMMITTING",
+  11: "READY_TO_FINALIZE", 12: "VALIDATORS_TIMEOUT", 13: "LEADER_TIMEOUT",
+};
+
+function classifyTx(tx) {
+  if (!tx || typeof tx !== "object") return { phase: "pending", final: false, detail: "" };
+
+  let status = tx.status_name ?? tx.statusName ?? tx.status;
+  if (typeof status === "number" || /^\d+$/.test(String(status))) {
+    status = GL_TX_STATUS[Number(status)] || String(status);
+  }
+  status = String(status || "").toUpperCase();
+
+  const cd = tx.consensus_data ?? tx.consensusData ?? {};
+  const receipts = cd.leader_receipt ?? cd.leaderReceipt ?? [];
+  const leader = Array.isArray(receipts) ? receipts[0] : receipts;
+  const exec = String(leader?.execution_result ?? leader?.executionResult ?? "").toUpperCase();
+  const vmres = leader?.genvm_result ?? leader?.genvmResult ?? {};
+  const detail = String(vmres?.stderr || vmres?.stdout || "").trim().slice(-200);
+
+  if (["UNDETERMINED", "CANCELED", "VALIDATORS_TIMEOUT", "LEADER_TIMEOUT"].includes(status)) {
+    return { phase: "failed", final: false, detail: detail || `consensus ended ${status}` };
+  }
+  if (status === "ACCEPTED" || status === "FINALIZED") {
+    if (exec === "SUCCESS") return { phase: "ok", final: status === "FINALIZED", detail: "" };
+    if (exec === "ERROR") return { phase: "failed", final: status === "FINALIZED", detail: detail || "execution error" };
+    return { phase: "pending", final: false, detail: "" };
+  }
+  return { phase: "pending", final: false, detail: "" };
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { classifyTx };
+}

@@ -1,45 +1,39 @@
 """End-to-end journeys on StudioNet (real consensus, real AI, no mocks).
 
-Two journeys:
+Two journeys, both over REAL marketplace orders (seller = operator,
+buyer = alice) that the verifier authenticates at registration:
 
-1. ``test_review_journey_single_account`` - the review-verifier story:
-   register a delivered purchase -> Tier-1 submission -> Tier-2 AI verdict
-   through the Equivalence Principle -> aggregate score/stats reflect it.
+1. ``test_review_journey_delivered_order`` - buy -> deliver -> register
+   (authenticated against the marketplace) -> Tier-1 submission -> Tier-2
+   AI verdict through the Equivalence Principle -> aggregates.
 
-2. ``test_marketplace_journey_two_accounts`` - the full marketplace story:
-   alice lists a product, the operator buys it, alice delivers, the
-   operator confirms usage, registers the purchase themself (the buyer
-   is the registrar - self-service) and reviews it. Skips until alice
-   has StudioNet gas.
+2. ``test_marketplace_journey_full_lifecycle`` - the full story including
+   ``mark_used`` and a fraudulent registration attempt that is rejected
+   before the real buyer registers and reviews.
 
-Cooldown note: every operator submission in this file lands on
-``SHARED_PRODUCT`` - the same fixed product ``test_review_verifier`` uses -
-so this file (which runs before it, alphabetically) never trips the
-per-buyer cross-product cooldown rule. The marketplace listing uses
-``SHARED_PRODUCT`` too so the journey stays internally consistent; each
-session deploys fresh contracts, so the listing never collides.
+Both skip until alice has StudioNet gas.
 """
 import pytest
 
 from conftest import (
     AUTHENTIC_TEXT,
-    PHANTOM_SELLER,
     SHARED_PRODUCT,
     STATUS_LIVE,
     STATUS_MANUAL,
     assert_ok,
     hex_addr,
-    new_purchase_id,
+    receipt_error,
 )
+from gltest.assertions import tx_execution_failed
 
 
-def test_review_journey_single_account(
-    verifier, register_purchase, submit_review, operator
+def test_review_journey_delivered_order(
+    verifier, make_order, register_purchase, submit_review, buyer
 ):
-    """register -> submit -> real AI verdict -> aggregates."""
-    purchase_id = new_purchase_id("journey")
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, PHANTOM_SELLER)
-    submit_review(operator, purchase_id, 5, AUTHENTIC_TEXT)
+    """buy -> deliver -> register -> submit -> real AI verdict -> aggregates."""
+    purchase_id = make_order("DELIVERED")
+    register_purchase(buyer, purchase_id)
+    submit_review(buyer, purchase_id, 5, AUTHENTIC_TEXT)
 
     receipt = verifier.verify_review(args=[purchase_id]).transact()
     assert_ok(receipt, f"verify_review({purchase_id})")
@@ -72,57 +66,58 @@ def test_review_journey_single_account(
     assert verifier.is_review_allowed(args=[purchase_id]).call() is False
 
 
-def test_marketplace_journey_two_accounts(
+def test_marketplace_journey_full_lifecycle(
     verifier,
     marketplace,
     operator,
-    alice_ready,
+    buyer,
+    shared_listing,
     register_purchase,
     submit_review,
 ):
-    """list -> buy -> deliver -> use -> register -> buyer review."""
-    receipt = (
-        marketplace.connect(alice_ready)
-        .list_item(args=[SHARED_PRODUCT, "Wireless Headphones Pro", 129])
-        .transact()
-    )
-    assert_ok(receipt, "list_item (journey, alice is seller)")
+    """list -> buy -> (fraud attempt) -> deliver -> use -> register -> review."""
+    from conftest import new_purchase_id
 
     purchase_id = new_purchase_id("journey")
-    receipt = (
-        marketplace.connect(operator)
-        .buy(args=[SHARED_PRODUCT, purchase_id])
-        .transact()
+    assert_ok(
+        marketplace.connect(buyer).buy(args=[shared_listing, purchase_id]).transact(),
+        "buy (alice is buyer)",
     )
-    assert_ok(receipt, "buy (operator is buyer)")
 
-    receipt = (
-        marketplace.connect(alice_ready)
-        .mark_delivered(args=[purchase_id])
-        .transact()
-    )
-    assert_ok(receipt, "mark_delivered (alice is seller)")
+    # Not delivered yet: registration must be refused.
+    receipt = register_purchase(buyer, purchase_id, expect_ok=False)
+    assert tx_execution_failed(receipt)
+    assert "has not been delivered" in receipt_error(receipt)
 
-    receipt = (
-        marketplace.connect(operator).mark_used(args=[purchase_id]).transact()
+    assert_ok(
+        marketplace.connect(operator).mark_delivered(args=[purchase_id]).transact(),
+        "mark_delivered (operator is seller)",
     )
-    assert_ok(receipt, "mark_used (operator is buyer)")
+
+    # The seller trying to register the buyer's order is refused too.
+    receipt = register_purchase(operator, purchase_id, expect_ok=False)
+    assert tx_execution_failed(receipt)
+    assert "only the buyer may register" in receipt_error(receipt)
+
+    assert_ok(
+        marketplace.connect(buyer).mark_used(args=[purchase_id]).transact(),
+        "mark_used (alice is buyer)",
+    )
 
     purchase = marketplace.get_purchase(args=[purchase_id]).call()
     assert purchase["state"] == "USED"
-    assert purchase["buyer"] == hex_addr(operator)
-    assert purchase["seller"] == hex_addr(alice_ready)
+    assert purchase["buyer"] == hex_addr(buyer)
+    assert purchase["seller"] == hex_addr(operator)
 
-    # Buyer self-service wiring: the USED order's buyer registers their
-    # own purchase as review-eligible.
-    register_purchase(operator, purchase_id, SHARED_PRODUCT, hex_addr(alice_ready))
+    # Only now does the marketplace-authenticated buyer registration work.
+    register_purchase(buyer, purchase_id)
     assert verifier.is_review_allowed(args=[purchase_id]).call() is True
 
-    submit_review(operator, purchase_id, 5, AUTHENTIC_TEXT)
+    submit_review(buyer, purchase_id, 5, AUTHENTIC_TEXT)
     record = verifier.get_review(args=[purchase_id]).call()
     assert record["status"] == "PENDING"
-    assert record["buyer"] == hex_addr(operator)
-    assert record["seller"] == hex_addr(alice_ready)
+    assert record["buyer"] == hex_addr(buyer)
+    assert record["seller"] == hex_addr(operator)
 
     product_reviews = verifier.get_product_reviews(args=[SHARED_PRODUCT]).call()
     assert purchase_id in [r["purchase_id"] for r in product_reviews]

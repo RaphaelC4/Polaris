@@ -2,9 +2,19 @@
 """ReviewVerifier - reusable two-tier anti-fake-review gate for GenLayer.
 
 Tier 1 (deterministic evidence gate): provable, consensus-free checks that
-run on every submission - buyer-only submission, one review per purchase,
-rating/text bounds, sanitization, reviewer != seller, per-buyer cooldown.
-A review that passes Tier 1 is stored with status PENDING.
+run on every submission - authenticated purchase, buyer-only submission,
+one review per purchase, rating/text bounds, sanitization, reviewer !=
+seller, per-buyer cooldown. A review that passes Tier 1 is stored with
+status PENDING.
+
+Purchase authentication: the verifier is bound at deploy time to ONE
+marketplace contract. `register_purchase(purchase_id)` takes only the
+purchase id; the verifier reads the order from the marketplace
+(contract-to-contract view call) and requires that the order exists, that
+its recorded buyer is the transaction sender, and that it has reached
+DELIVERED or USED. Product and seller come from the marketplace record,
+never from the caller, so fabricated purchases and squatting on somebody
+else's purchase id are both impossible.
 
 Tier 2 (AI-consensus verification): `verify_review` runs the review text
 through the Equivalence Principle (gl.eq_principle) where independent
@@ -15,7 +25,7 @@ Verdicts map to LIVE / DENIED / MANUAL_CHECK (inconclusive or
 low-confidence consensus).
 
 Governance: there is no human arbiter. Registration is self-service
-(only the buyer of the purchase may register it), and the buyer may
+(only the marketplace-recorded buyer may register), and the buyer may
 appeal once from any final verdict (LIVE / DENIED / MANUAL_CHECK),
 which sends the review back to PENDING for a fresh AI round with a
 rotated validator set. MANUAL_CHECK is a terminal "no confident AI
@@ -48,10 +58,14 @@ MIN_RATING = 1
 MAX_RATING = 5
 MIN_REVIEW_LEN = 20
 MAX_REVIEW_LEN = 2000
-COOLDOWN_SECONDS = 3600  # minimum seconds between two reviews by same buyer
+DEFAULT_COOLDOWN_SECONDS = 3600  # recommended deploy value (1h between any two reviews)
 MAX_URL_LEN = 500        # product web link length cap
 MAX_MEDIA_LINKS = 4      # max additional media/file links per review
 MAX_EVIDENCE_CHARS = 4000  # cap on fetched page evidence fed to the LLM
+
+# Marketplace order states that make a purchase review-eligible. These must
+# match the state strings of contracts/demo_marketplace.py.
+ELIGIBLE_ORDER_STATES = ("DELIVERED", "USED")
 
 STATUS_PENDING = "PENDING"
 STATUS_LIVE = "LIVE"
@@ -132,7 +146,23 @@ def _confidence_to_int(raw) -> int:
     return pct
 
 
+def _parse_address(value: str) -> str:
+    """Validate a 0x-prefixed 20-byte hex address and return it lowercase."""
+    clean = (value or "").strip().lower()
+    if len(clean) != 42 or not clean.startswith("0x"):
+        raise ValueError("marketplace must be a 0x-prefixed 20-byte hex address")
+    try:
+        int(clean[2:], 16)
+    except ValueError:
+        raise ValueError("marketplace must be a 0x-prefixed 20-byte hex address")
+    return clean
+
+
 class ReviewVerifier(gl.Contract):
+    # the ONE marketplace whose orders this verifier trusts (hex, lowercase)
+    marketplace: str
+    # minimum seconds between two reviews by the same buyer (0 disables)
+    cooldown_seconds: u256
     # review records: purchase_id -> JSON review record
     reviews: TreeMap[str, str]
     # product_id -> JSON list of purchase_ids that reviewed this product
@@ -140,11 +170,14 @@ class ReviewVerifier(gl.Contract):
     # buyer address (hex) -> JSON list of {"product_id","review_ts"} for cooldown
     buyer_history: TreeMap[str, str]
 
-    def __init__(self):
+    def __init__(self, marketplace: str, cooldown_seconds: int):
         # NOTE: the TreeMaps above are auto-instantiated by the storage
         # layer and must NOT be assigned here - `self.reviews = {}` would
         # shadow them with a plain dict that never persists.
-        pass
+        if cooldown_seconds < 0:
+            raise ValueError("cooldown_seconds must be non-negative")
+        self.marketplace = _parse_address(marketplace)
+        self.cooldown_seconds = cooldown_seconds
 
     # ------------------------------------------------------------- internal
     def _require(self, condition: bool, message: str) -> None:
@@ -155,32 +188,57 @@ class ReviewVerifier(gl.Contract):
         self._require(purchase_id in self.reviews, "unknown purchase")
         return json.loads(self.reviews[purchase_id])
 
+    def _marketplace_order(self, purchase_id: str) -> dict:
+        """Read one order from the bound marketplace (contract-to-contract).
+
+        Uses the non-reverting `get_purchase_safe` view, which returns {}
+        for an unknown purchase, so the caller can raise a clear error.
+        """
+        market = gl.get_contract_at(Address(bytes.fromhex(self.marketplace[2:])))
+        order = market.view().get_purchase_safe(purchase_id)
+        return order if isinstance(order, dict) else {}
+
     # ------------------------------------------------- Tier 1: registration
     @gl.public.write
-    def register_purchase(
-        self, purchase_id: str, buyer: str, product_id: str, seller: str
-    ) -> None:
-        """Register a delivered purchase as eligible for review (self-service).
+    def register_purchase(self, purchase_id: str) -> None:
+        """Register a delivered marketplace purchase as eligible for review.
 
-        Only the buyer themself may register their purchase: the tx sender
-        must equal `buyer`. This keeps the flow trustless - the platform
-        never needs a privileged "operator" to wire orders into the gate.
-        `seller` is a hex address; Tier-1 rejects buyer == seller.
+        The caller supplies ONLY the purchase id. Everything else is read
+        from the bound marketplace, so nothing about the purchase is
+        caller-asserted:
+          - the order must exist in the marketplace,
+          - the order's recorded buyer must be the tx sender (so nobody can
+            register, or squat on, another wallet's purchase id),
+          - the order must be DELIVERED or USED,
+          - product and seller are taken from the marketplace record.
         """
         sender = gl.message.sender_address.as_hex.lower()
         self._require(len(purchase_id) > 0, "purchase_id required")
-        self._require(buyer.startswith("0x"), "buyer must be a hex address")
-        self._require(sender == buyer.lower(), "only the buyer may register this purchase")
-        self._require(seller.startswith("0x"), "seller must be a hex address")
-        self._require(buyer.lower() != seller.lower(), "buyer equals seller")
         self._require(purchase_id not in self.reviews, "purchase already registered")
+
+        order = self._marketplace_order(purchase_id)
+        self._require(bool(order), "purchase not found in marketplace")
+        self._require(
+            str(order.get("purchase_id", "")) == purchase_id,
+            "marketplace record does not match purchase id",
+        )
+        buyer = str(order.get("buyer", "")).lower()
+        seller = str(order.get("seller", "")).lower()
+        product_id = str(order.get("product_id", ""))
+        self._require(sender == buyer, "only the buyer may register this purchase")
+        self._require(
+            str(order.get("state", "")) in ELIGIBLE_ORDER_STATES,
+            "purchase has not been delivered",
+        )
+        self._require(len(product_id) > 0, "marketplace record has no product")
+        self._require(buyer != seller, "buyer equals seller")
 
         self.reviews[purchase_id] = json.dumps(
             {
                 "purchase_id": purchase_id,
                 "product_id": product_id,
-                "buyer": buyer.lower(),
-                "seller": seller.lower(),
+                "buyer": buyer,
+                "seller": seller,
                 "rating": 0,
                 "text": "",
                 "web_url": "",
@@ -214,7 +272,8 @@ class ReviewVerifier(gl.Contract):
             sender == record["buyer"], "only the buyer may review this purchase"
         )
         # seller != reviewer is guaranteed by registration: the buyer is
-        # the submitter and registration rejects buyer == seller.
+        # the marketplace-recorded buyer and registration rejects
+        # buyer == seller.
         self._require(MIN_RATING <= rating <= MAX_RATING, "rating out of range")
 
         clean = _sanitize_text(text)
@@ -226,14 +285,17 @@ class ReviewVerifier(gl.Contract):
         clean_url = _sanitize_url(web_url)
         clean_media = _sanitize_media_links(media_links)
 
-        # per-buyer cooldown across different products (same product is
-        # exempt - one-review-per-purchase already limits that path)
+        # per-buyer cooldown across ALL of the buyer's reviews. Purchases are
+        # authenticated against the marketplace, so there is no same-product
+        # exemption: repeat reviews of one product are rate-limited like any
+        # other.
         history = json.loads(self.buyer_history.get(sender, "[]"))
         now = _now()
-        for entry in history:
-            if entry["product_id"] != record["product_id"]:
+        cooldown = int(self.cooldown_seconds)
+        if cooldown > 0:
+            for entry in history:
                 self._require(
-                    now - entry["review_ts"] >= COOLDOWN_SECONDS,
+                    now - entry["review_ts"] >= cooldown,
                     "cooldown active: wait before submitting another review",
                 )
 
@@ -449,6 +511,14 @@ without errors."""
         )
 
     # -------------------------------------------------------------- views
+    @gl.public.view
+    def get_config(self) -> dict:
+        """Deploy-time trust anchor: which marketplace is authoritative."""
+        return {
+            "marketplace": self.marketplace,
+            "cooldown_seconds": int(self.cooldown_seconds),
+        }
+
     @gl.public.view
     def get_review(self, purchase_id: str) -> dict:
         return self._load_record(purchase_id)

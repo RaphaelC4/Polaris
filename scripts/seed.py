@@ -136,8 +136,9 @@ def main() -> int:
         if target >= RANK["REGISTERED"]:
             rrec = read(f"{oid} review", verifier_op.get_review(args=[oid]))
             if not rrec:
-                # self-service: the buyer registers their own purchase
-                run(f"{oid} register", verifier_buyer.register_purchase(args=[oid, buyer_addr, pid, seller_addr]))
+                # self-service: the buyer registers their own purchase; the
+                # verifier checks it against the marketplace record
+                run(f"{oid} register", verifier_buyer.register_purchase(args=[oid]))
                 rrec = read(f"{oid} review", verifier_op.get_review(args=[oid]))
             if target >= RANK["SUBMITTED"] and rrec and rrec.get("rating", 0) == 0:
                 run(f"{oid} submit", verifier_buyer.submit_review(args=[oid, 5, text]))

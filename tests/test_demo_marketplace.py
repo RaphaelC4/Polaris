@@ -38,6 +38,22 @@ def test_list_and_get_product(marketplace, operator, e2e_listing):
     assert product["seller"] == hex_addr(operator)
 
 
+def test_get_purchase_safe_is_non_reverting(marketplace):
+    """The verifier's cross-contract read: unknown id -> {}, never a revert."""
+    assert marketplace.get_purchase_safe(args=[new_purchase_id("nope")]).call() == {}
+
+
+def test_get_purchase_safe_matches_get_purchase(marketplace, buyer, e2e_listing):
+    """buyer (alice) buys the operator's listing; both views agree."""
+    purchase_id = new_purchase_id("safe")
+    receipt = marketplace.connect(buyer).buy(args=[e2e_listing, purchase_id]).transact()
+    assert_ok(receipt, "buy (safe view)")
+    assert (
+        marketplace.get_purchase_safe(args=[purchase_id]).call()
+        == marketplace.get_purchase(args=[purchase_id]).call()
+    )
+
+
 def test_list_rejects_duplicate(marketplace, operator, e2e_listing):
     receipt = (
         marketplace.connect(operator)

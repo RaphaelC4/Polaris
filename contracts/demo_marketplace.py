@@ -2,16 +2,11 @@
 """DemoMarketplace - minimal demo marketplace for the ReviewVerifier gate.
 
 Not production code: shows the purchase lifecycle the verifier gates on.
-Purchase states flow PAID -> DELIVERED -> USED. Once an order reaches
-DELIVERED or USED, the backend harness (see scripts/demo_e2e.py) registers
-it with a ReviewVerifier, which then decides who may review it.
-
-Cross-contract note: GenLayer contracts can call each other on-chain, but
-the gltest Direct Mode runner (used for local tests) does not support
-cross-contract calls via address. The wiring between the two contracts is
-therefore done by the thin backend harness in tests and scripts - the
-IReviewSource seam documented in README.md is where on-chain messaging
-plugs in.
+Purchase states flow PAID -> DELIVERED -> USED. A ReviewVerifier bound to
+this marketplace reads orders through `get_purchase_safe` (a
+contract-to-contract view call) and only lets the order's recorded buyer
+register it for review once it reached DELIVERED or USED. This contract is
+the source of truth for who bought what and whether it was delivered.
 """
 
 from genlayer import *  # binds the lazy `gl` proxy (genlayer.gl) + TreeMap
@@ -114,6 +109,17 @@ class DemoMarketplace(gl.Contract):
     @gl.public.view
     def get_purchase(self, purchase_id: str) -> dict:
         return self._load(purchase_id)
+
+    @gl.public.view
+    def get_purchase_safe(self, purchase_id: str) -> dict:
+        """Non-reverting lookup: {} when the purchase does not exist.
+
+        This is the read the ReviewVerifier makes across contracts, so an
+        unknown id must come back as an empty record, not an exception.
+        """
+        if purchase_id not in self.purchases:
+            return {}
+        return json.loads(self.purchases[purchase_id])
 
     @gl.public.view
     def get_all_products(self) -> list:

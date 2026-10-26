@@ -38,20 +38,25 @@ CONTRACTS_DIR = os.path.join(ROOT, "contracts")
 REVIEW_VERIFIER_PATH = os.path.join(CONTRACTS_DIR, "review_verifier.py")
 MARKETPLACE_PATH = os.path.join(CONTRACTS_DIR, "demo_marketplace.py")
 
-# Cooldown design: the per-buyer cooldown only applies across DIFFERENT
-# products, so every buyer submission lands on ONE fixed product id and
-# repeated runs never trip the 1h cooldown. The cooldown rule itself gets a
-# dedicated cross-product test. Same for alice: her submission product is
-# fixed too.
+# Test topology: `operator` deploys both contracts and is the SELLER of
+# every listing; `alice` is the BUYER. Every purchase is a real marketplace
+# order (buy -> mark_delivered [-> mark_used]) because the verifier now
+# authenticates registrations against the marketplace. That needs two
+# funded accounts, so the suite skips until alice has StudioNet gas.
+#
+# The main `verifier` fixture is deployed with cooldown 0 so the many
+# review submissions in one session do not trip the per-buyer cooldown; the
+# cooldown rule itself is tested against a dedicated `cooldown_verifier`
+# deployed with the production value (3600s).
 SHARED_PRODUCT = "prod-verify-shared"
 E2E_PRODUCT = "prod-e2e"
+PRODUCTION_COOLDOWN = 3600
 
 STATUS_PENDING = "PENDING"
 STATUS_LIVE = "LIVE"
 STATUS_DENIED = "DENIED"
 STATUS_MANUAL = "MANUAL_CHECK"
 
-ALICE_ADDRESS = "0x2b13bcb1281295aa7cb77326c02bee7768f78ab0"
 
 # Real-StudioNet review texts: written so a competent model separates them
 # (specific, experience-based details vs promotional spam).
@@ -66,8 +71,6 @@ FAKE_TEXT = (
     "now and grab the super-deal bonus through our promo link. Five stars, "
     "best price guaranteed, limited time offer, buy now buy now buy now!!!"
 )
-
-PHANTOM_SELLER = "0x9999999999999999999999999999999999999999"
 
 
 def hex_addr(account) -> str:
@@ -107,58 +110,90 @@ def assert_ok(receipt, what: str = "transaction") -> None:
 # ------------------------------------------------------------------ accounts
 @pytest.fixture(scope="session")
 def operator(default_account):
-    """Primary funded account: deploys contracts and acts as buyer."""
+    """Primary funded account: deploys contracts and is the SELLER."""
     return default_account
 
 
 @pytest.fixture(scope="session")
 def alice(accounts):
-    """Secondary account from gltest.config.yaml (second key in the list)."""
-    for acct in get_accounts():
-        if str(acct.address).lower() == ALICE_ADDRESS:
-            return acct
-    pytest.skip(
-        f"account {ALICE_ADDRESS} not found in gltest.config.yaml accounts"
-    )
+    """Buyer account: the SECOND key in gltest.config.yaml (accounts[1])."""
+    accts = get_accounts()
+    if len(accts) < 2:
+        pytest.skip("gltest.config.yaml needs at least two accounts (deployer, buyer)")
+    return accts[1]
 
 
-@pytest.fixture(scope="session")
-def alice_ready(alice, marketplace):
-    """Skip alice-gated tests until the second account has StudioNet gas.
-
-    There is no balance RPC on StudioNet, so funding is probed with a cheap
-    write (a probe listing) under a short wait budget.
-    """
+def _probe_funded(marketplace, account, label):
+    """No balance RPC on StudioNet: probe funding with a cheap write."""
     probe_id = f"probe-{uuid.uuid4().hex[:8]}"
     try:
         receipt = (
-            marketplace.connect(alice)
+            marketplace.connect(account)
             .list_item(args=[probe_id, "funding probe", 0])
             .transact(wait_interval=1000, wait_retries=8)
         )
         if tx_execution_failed(receipt):
             pytest.skip(
-                f"alice ({ALICE_ADDRESS}) has no StudioNet gas "
-                f"(probe reverted): {receipt_error(receipt)}"
+                f"{label} has no StudioNet gas (probe reverted): "
+                f"{receipt_error(receipt)}"
             )
     except Exception as exc:  # unfunded txs never reach ACCEPTED
-        pytest.skip(f"alice ({ALICE_ADDRESS}) appears unfunded: {exc}")
-    return alice
+        pytest.skip(f"{label} appears unfunded: {exc}")
+    return account
+
+
+@pytest.fixture(scope="session")
+def alice_ready(alice, marketplace):
+    """Skip buyer-gated tests until the second account has StudioNet gas."""
+    return _probe_funded(marketplace, alice, f"buyer ({str(alice.address).lower()})")
+
+
+@pytest.fixture(scope="session")
+def buyer(alice_ready):
+    """The buyer in every marketplace order (alias for the funded alice)."""
+    return alice_ready
+
+
+@pytest.fixture(scope="session")
+def mallory(marketplace):
+    """Optional third funded account (accounts[2]) used as an outside attacker.
+
+    Skips when the config has no third key or it is unfunded; the core
+    adversarial tests also run with the seller account as the non-buyer.
+    """
+    accts = get_accounts()
+    if len(accts) < 3:
+        pytest.skip("no third account in gltest.config.yaml for the attacker role")
+    return _probe_funded(
+        marketplace, accts[2], f"third account ({str(accts[2].address).lower()})"
+    )
 
 
 # ---------------------------------------------------------------- deployments
-@pytest.fixture(scope="session")
-def verifier(operator):
-    """ReviewVerifier deployed once per session; operator = deployer account."""
-    factory = get_contract_factory_safe(REVIEW_VERIFIER_PATH)
-    return factory.deploy(args=[], account=operator)
-
-
 @pytest.fixture(scope="session")
 def marketplace(operator):
     """DemoMarketplace deployed once per session."""
     factory = get_contract_factory_safe(MARKETPLACE_PATH)
     return factory.deploy(args=[], account=operator)
+
+
+def _deploy_verifier(operator, marketplace, cooldown_seconds):
+    factory = get_contract_factory_safe(REVIEW_VERIFIER_PATH)
+    return factory.deploy(
+        args=[str(marketplace.address).lower(), cooldown_seconds], account=operator
+    )
+
+
+@pytest.fixture(scope="session")
+def verifier(operator, marketplace):
+    """ReviewVerifier bound to `marketplace`, cooldown disabled for the suite."""
+    return _deploy_verifier(operator, marketplace, 0)
+
+
+@pytest.fixture(scope="session")
+def cooldown_verifier(operator, marketplace):
+    """ReviewVerifier bound to the same marketplace with the production cooldown."""
+    return _deploy_verifier(operator, marketplace, PRODUCTION_COOLDOWN)
 
 
 def get_contract_factory_safe(path):
@@ -168,28 +203,67 @@ def get_contract_factory_safe(path):
 
 
 # ------------------------------------------------------------------- helpers
-# Session scope: pure wrappers around session-scoped contracts/accounts;
-# the session-scoped AI fixtures (authentic_review, fake_review) depend on
-# them, so function scope would raise ScopeMismatch.
 @pytest.fixture(scope="session")
-def register_purchase(verifier):
-    """Buyer-side helper: registration is self-service.
+def shared_listing(marketplace, operator):
+    """SHARED_PRODUCT listed once by the operator (the seller)."""
+    receipt = (
+        marketplace.connect(operator)
+        .list_item(args=[SHARED_PRODUCT, "Wireless Headphones Pro", 129])
+        .transact()
+    )
+    assert_ok(receipt, "list_item (shared listing)")
+    return SHARED_PRODUCT
 
-    The tx sender must equal the ``buyer`` argument, so the first argument
-    is the buyer's gltest account (address is derived from it, never
-    passed as a string).
+
+@pytest.fixture(scope="session")
+def make_order(marketplace, operator, buyer, shared_listing):
+    """Create a real marketplace order and move it to ``state``.
+
+    state: "PAID" | "DELIVERED" | "USED". The buyer buys, the seller
+    (operator) marks delivery, the buyer confirms use. Returns the id.
     """
 
-    def _register(buyer, purchase_id: str, product_id: str, seller) -> str:
-        receipt = (
-            verifier.connect(buyer)
-            .register_purchase(
-                args=[purchase_id, hex_addr(buyer), product_id, hex_addr(seller)]
-            )
-            .transact()
+    def _make(state: str = "DELIVERED", product_id: str = SHARED_PRODUCT) -> str:
+        purchase_id = new_purchase_id("ord")
+        assert_ok(
+            marketplace.connect(buyer).buy(args=[product_id, purchase_id]).transact(),
+            f"buy({purchase_id})",
         )
-        assert_ok(receipt, f"register_purchase({purchase_id})")
+        if state in ("DELIVERED", "USED"):
+            assert_ok(
+                marketplace.connect(operator)
+                .mark_delivered(args=[purchase_id])
+                .transact(),
+                f"mark_delivered({purchase_id})",
+            )
+        if state == "USED":
+            assert_ok(
+                marketplace.connect(buyer).mark_used(args=[purchase_id]).transact(),
+                f"mark_used({purchase_id})",
+            )
         return purchase_id
+
+    return _make
+
+
+# Session scope: pure wrappers around session-scoped contracts/accounts;
+# the session-scoped AI fixtures depend on them, so function scope would
+# raise ScopeMismatch.
+@pytest.fixture(scope="session")
+def register_purchase(verifier):
+    """Register a marketplace order with the verifier as ``account``.
+
+    Registration takes only the purchase id; the verifier authenticates
+    buyer, existence and delivery state against the marketplace. Pass
+    ``expect_ok=False`` for attempts that are SUPPOSED to revert.
+    """
+
+    def _register(account, purchase_id: str, expect_ok=True, contract=None):
+        target = contract or verifier
+        receipt = target.connect(account).register_purchase(args=[purchase_id]).transact()
+        if expect_ok:
+            assert_ok(receipt, f"register_purchase({purchase_id})")
+        return receipt
 
     return _register
 
@@ -202,9 +276,11 @@ def submit_review(verifier):
     is SUPPOSED to revert (assertions on failure happen in the test).
     """
 
-    def _submit(as_account, purchase_id: str, rating: int, text: str, expect_ok=True):
+    def _submit(as_account, purchase_id: str, rating: int, text: str,
+                expect_ok=True, contract=None):
+        target = contract or verifier
         receipt = (
-            verifier.connect(as_account)
+            target.connect(as_account)
             .submit_review(args=[purchase_id, rating, text])
             .transact()
         )
